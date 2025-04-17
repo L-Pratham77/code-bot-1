@@ -61,16 +61,8 @@ async function botReply(userText) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
 
     try {
-        let GROQ_API_KEY = localStorage.getItem('GROQ_API_KEY');
-        if (!GROQ_API_KEY) {
-            GROQ_API_KEY = prompt('Please enter your Groq API key:');
-            if (GROQ_API_KEY) {
-                localStorage.setItem('GROQ_API_KEY', GROQ_API_KEY);
-            } else {
-                loadingBubble.textContent = 'Error: API key is required.';
-                return;
-            }
-        }
+        // Hardcoded API key for demo purposes (do NOT use in production)
+        const GROQ_API_KEY = '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';
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -117,8 +109,7 @@ async function botReply(userText) {
     } catch (err) {
         loadingBubble.textContent = "Error: " + (err.message || 'Unable to reach AI server');
         if (err.message?.includes('401')) {
-            localStorage.removeItem('GROQ_API_KEY');
-            loadingBubble.textContent += ". Please try again with a valid API key.";
+            loadingBubble.textContent += ". There was an error with the API request.";
         }
     }
 }
