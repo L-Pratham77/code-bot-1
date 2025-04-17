@@ -1,29 +1,134 @@
+// Import Firebase modules
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import { getAuth, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+// Firebase configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyAt4ar8NhtfLpMGZ8cz-pYPpBlmiNw5QxQ",
+    authDomain: "codebot2.firebaseapp.com",
+    projectId: "codebot2",
+    storageBucket: "codebot2.firebasestorage.app",
+    messagingSenderId: "960325836067",
+    appId: "1:960325836067:web:cc3878f5a4c76ee03e0096",
+    measurementId: "G-TCYL9N99L0"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// DOM elements
 const chatWindow = document.getElementById('chat-window');
 const chatForm = document.getElementById('chat-form');
 const userInput = document.getElementById('user-input');
+const logoutBtn = document.getElementById('logout-btn');
 
-function appendMessage(sender, text) {
+// Check authentication state
+onAuthStateChanged(auth, (user) => {
+    if (!user) {
+        window.location.href = 'login.html';
+    } else {
+        loadChatHistory();
+    }
+});
+
+// Logout functionality
+logoutBtn.addEventListener('click', async () => {
+    try {
+        await signOut(auth);
+        window.location.href = 'login.html';
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+});
+
+// Load chat history from Firestore
+async function loadChatHistory() {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    try {
+        const q = query(
+            collection(db, 'chats'),
+            where('userId', '==', user.uid),
+            orderBy('timestamp', 'desc'),
+            limit(50)
+        );
+        
+        const snapshot = await getDocs(q);
+        const messages = [];
+        snapshot.forEach(doc => {
+            messages.push(doc.data());
+        });
+
+        // Display messages in chronological order
+        messages.reverse().forEach(msg => {
+            appendMessage(msg.sender, msg.text, msg.timestamp);
+        });
+    } catch (error) {
+        console.error('Error loading chat history:', error);
+    }
+}
+
+// Save message to Firestore
+async function saveMessage(sender, text) {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    try {
+        await addDoc(collection(db, 'chats'), {
+            userId: user.uid,
+            sender: sender,
+            text: text,
+            timestamp: serverTimestamp()
+        });
+    } catch (error) {
+        console.error('Error saving message:', error);
+    }
+}
+
+function appendMessage(sender, text, timestamp = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
+    
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
+    
+    if (sender === 'bot') {
+        const avatar = document.createElement('img');
+        avatar.src = 'P lightening.png';
+        avatar.alt = 'Bot Avatar';
+        avatar.className = 'avatar';
+        messageContent.appendChild(avatar);
+    }
+    
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
+    
     if (sender === 'bot') {
-        // Render as HTML for code blocks
         bubble.innerHTML = text;
     } else {
         bubble.textContent = text;
     }
-    messageDiv.appendChild(bubble);
+
+    if (timestamp) {
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'message-time';
+        timeSpan.textContent = new Date(timestamp.toDate()).toLocaleTimeString();
+        bubble.appendChild(timeSpan);
+    }
+
+    messageContent.appendChild(bubble);
+    messageDiv.appendChild(messageContent);
     chatWindow.appendChild(messageDiv);
     chatWindow.scrollTop = chatWindow.scrollHeight;
 
-    // Highlight code and add copy buttons for bot messages
     if (sender === 'bot') {
-        // Highlight all code blocks
         bubble.querySelectorAll('pre code').forEach(block => {
             if (window.hljs) window.hljs.highlightElement(block);
         });
-        // Add copy buttons
         bubble.querySelectorAll('pre').forEach(pre => {
             if (!pre.querySelector('.copy-btn')) {
                 const btn = document.createElement('button');
@@ -48,9 +153,7 @@ function appendMessage(sender, text) {
     }
 }
 
-
 async function botReply(userText) {
-    // Show loading bubble
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'message bot';
     const loadingBubble = document.createElement('div');
@@ -61,7 +164,6 @@ async function botReply(userText) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
 
     try {
-        // Hardcoded API key for demo purposes (do NOT use in production)
         const GROQ_API_KEY = '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';
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -81,7 +183,10 @@ async function botReply(userText) {
         const data = await response.json();
         const aiMessage = data.choices?.[0]?.message?.content || "Sorry, I couldn't get a response.";
         loadingBubble.innerHTML = renderMarkdown(aiMessage);
-        // Highlight and add copy buttons
+        
+        // Save the bot's response to Firestore
+        await saveMessage('bot', aiMessage);
+
         loadingBubble.querySelectorAll('pre code').forEach(block => {
             if (window.hljs) window.hljs.highlightElement(block);
         });
@@ -114,21 +219,20 @@ async function botReply(userText) {
     }
 }
 
-// Basic markdown renderer for code blocks
 function renderMarkdown(text) {
-    // Replace triple backtick code blocks with <pre><code class="language-xxx">...</code></pre>
     return text.replace(/```(\w+)?\n([\s\S]*?)```/g, function(match, lang, code) {
         const safeCode = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         return `<pre><code class="language-${lang || ''}">${safeCode}</code></pre>`;
     });
 }
 
-
-chatForm.addEventListener('submit', function(e) {
+chatForm.addEventListener('submit', async function(e) {
     e.preventDefault();
     const userText = userInput.value.trim();
     if (!userText) return;
+
     appendMessage('user', userText);
+    await saveMessage('user', userText);
     userInput.value = '';
     botReply(userText);
 });
@@ -136,25 +240,27 @@ chatForm.addEventListener('submit', function(e) {
 // Theme toggle logic
 const themeToggle = document.getElementById('theme-toggle');
 function setTheme(mode) {
-    if (mode === 'dark') {
-        document.body.classList.add('dark-mode');
-        if (themeToggle) themeToggle.textContent = '☀️';
-    } else {
-        document.body.classList.remove('dark-mode');
+    if (mode === 'light') {
+        document.body.classList.add('light-mode');
         if (themeToggle) themeToggle.textContent = '🌙';
+    } else {
+        document.body.classList.remove('light-mode');
+        if (themeToggle) themeToggle.textContent = '☀️';
     }
     localStorage.setItem('theme', mode);
 }
+
 if (themeToggle) {
     themeToggle.onclick = () => {
-        const isDark = document.body.classList.toggle('dark-mode');
-        themeToggle.textContent = isDark ? '☀️' : '🌙';
-        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        const isLight = document.body.classList.toggle('light-mode');
+        themeToggle.textContent = isLight ? '🌙' : '☀️';
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
     };
 }
-// On load, set theme from localStorage
+
+// On load, set theme from localStorage or default to dark
 window.onload = () => {
     const saved = localStorage.getItem('theme');
-    setTheme(saved === 'dark' ? 'dark' : 'light');
+    setTheme(saved === 'light' ? 'light' : 'dark');
     appendMessage('bot', "Hello! I'm your chatbot. How can I assist you today?");
 };
